@@ -14,7 +14,8 @@ from app.document_reader import extract_document_text
 from app.qa_engine import answer_question
 from app.upload_utils import read_limited_file
 
-from app.database import save_document, list_documents, get_document, get_document_text
+from app.database import save_document, list_documents, get_document, get_document_text, delete_document, init_db
+from contextlib import asynccontextmanager
 
 from app.schemas import (
     DocumentListResponse,
@@ -24,16 +25,33 @@ from app.schemas import (
     DocumentQuestionRequest,
     DocumentQuestionResponse,
 )
+import logging
+
+logger = logging.getLogger(__name__)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize the database when the application starts.
+    init_db()
+
+    # Allow FastAPI to serve requests.
+    yield
+
+
 app = FastAPI(
     title="AI Document Intelligence API",
     description="An API for document analysis and AI-powered assistance.",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
+
+
 
 
 class SummarizeRequest(BaseModel):
     text: str = Field(min_length=20, max_length=10000)
     max_sentences: int = Field(default=3, ge=1, le=10)
+
 
 @app.get("/ui", include_in_schema=False)
 def home_page():
@@ -272,6 +290,7 @@ def get_document_by_id(document_id: int):
     return document
 
 
+
 @app.post(
     "/documents/{document_id}/ask",
     response_model=DocumentQuestionResponse,
@@ -280,17 +299,35 @@ def ask_saved_document(
     document_id: int,
     request: DocumentQuestionRequest,
 ):
-    document = get_document_text(document_id)
+    # Reject document IDs that cannot be valid database IDs.
+    if document_id <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail="Document ID must be a positive integer.",
+        )
 
-    if document is None:
+    # Reject questions that contain only whitespace.
+    question = request.question.strip()
+
+    if not question:
+        raise HTTPException(
+            status_code=422,
+            detail="Question cannot be empty.",
+        )
+
+    # Look up the saved document.
+    saved_document = get_document_text(document_id)
+
+    if saved_document is None:
         raise HTTPException(
             status_code=404,
             detail="Document not found.",
         )
 
-    extracted_text = document["extracted_text"]
+    # Ensure the document has text available for question answering.
+    extracted_text = saved_document["extracted_text"]
 
-    if not extracted_text.strip():
+    if not extracted_text or not extracted_text.strip():
         raise HTTPException(
             status_code=409,
             detail=(
@@ -299,17 +336,59 @@ def ask_saved_document(
             ),
         )
 
-    result = answer_question(
-        document_text=extracted_text,
-        question=request.question,
-    )
+    # Run the QA model and handle unexpected model failures.
+    try:
+        result = answer_question(
+            document_text=extracted_text,
+            question=question,
+        )
+    except Exception:
+        logger.exception(
+            "Question answering failed for document ID %s",
+            document_id,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Question answering is temporarily unavailable. "
+                "Please try again later."
+            ),
+        ) from None
 
+    # Return the validated response to the client.
     return {
-        "document_id": document["id"],
-        "filename": document["filename"],
-        "question": request.question,
+        "document_id": saved_document["id"],
+        "filename": saved_document["filename"],
+        "question": question,
         "answer": result["answer"],
         "confidence": result["confidence"],
         "source_passage": result["source_passage"],
     }
+
+
+@app.delete("/documents/{document_id}")
+def delete_saved_document(document_id: int):
+    # Reject invalid IDs before accessing the database.
+    if document_id <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail="Document ID must be a positive integer.",
+        )
+
+    # Attempt to delete the saved document.
+    deleted = delete_document(document_id)
+
+    # Return 404 when no matching record exists.
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found.",
+        )
+
+    # Return confirmation to the client.
+    return {
+        "message": "Document deleted successfully.",
+        "document_id": document_id,
+    }
+
 

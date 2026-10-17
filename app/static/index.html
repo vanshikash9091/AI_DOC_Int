@@ -122,12 +122,6 @@
         const summaryResult = document.getElementById("summaryResult");
         const documentList = document.getElementById("documentList");
         const refreshButton = document.getElementById("refreshButton");
-        const questionForm = document.getElementById("questionForm");
-        const questionFile = document.getElementById("questionFile");
-        const questionInput = document.getElementById("question");
-        const questionButton = document.getElementById("questionButton");
-        const questionStatus = document.getElementById("questionStatus");
-        const answerResult = document.getElementById("answerResult");
         const savedQuestionForm = document.getElementById("savedQuestionForm");
         const savedDocumentId = document.getElementById("savedDocumentId");
         const savedQuestion = document.getElementById("savedQuestion");
@@ -226,7 +220,57 @@
                     const summary = document.createElement("p");
                     summary.textContent = doc.summary;
 
-                    item.append(title, details, summary);
+                    const deleteButton = document.createElement("button");
+                    deleteButton.type = "button";
+                    deleteButton.textContent = "Delete";
+                    deleteButton.setAttribute(
+                        "aria-label",
+                        `Delete ${doc.filename}`
+                    );
+
+                    deleteButton.addEventListener("click", async() => {
+                        const confirmed = window.confirm(
+                            `Are you sure you want to delete "${doc.filename}"? This action cannot be undone.`
+                        );
+
+                        if (!confirmed) {
+                            return;
+                        }
+
+                        deleteButton.disabled = true;
+                        deleteButton.textContent = "Deleting...";
+
+                        try {
+                            const response = await fetch(
+                                `/documents/${encodeURIComponent(doc.id)}`, {
+                                    method: "DELETE"
+                                }
+                            );
+
+                            const data = await response.json();
+
+                            if (!response.ok) {
+                                throw new Error(
+                                    data.detail || "Could not delete the document."
+                                );
+                            }
+
+                            statusBox.textContent =
+                                `Deleted "${doc.filename}" successfully.`;
+
+                            savedAnswerResult.replaceChildren();
+                            savedQuestionStatus.textContent = "";
+
+                            await loadDocuments();
+                            await loadSavedDocumentOptions();
+                        } catch (error) {
+                            statusBox.textContent = `Delete failed: ${error.message}`;
+                            deleteButton.disabled = false;
+                            deleteButton.textContent = "Delete";
+                        }
+                    });
+
+                    item.append(title, details, summary, deleteButton);
                     documentList.append(item);
                 }
 
@@ -277,76 +321,6 @@
         }
 
 
-        questionForm.addEventListener("submit", async(event) => {
-            event.preventDefault();
-
-            const file = questionFile.files[0];
-            const question = questionInput.value.trim();
-
-            if (!file) {
-                questionStatus.textContent = "Please choose a document.";
-                return;
-            }
-
-            if (!question) {
-                questionStatus.textContent = "Please enter a question.";
-                return;
-            }
-
-            const formData = new FormData();
-            formData.append("file", file);
-            formData.append("question", question);
-
-            questionButton.disabled = true;
-            questionStatus.textContent = "Reading document and finding an answer...";
-            answerResult.replaceChildren();
-
-            try {
-                const response = await fetch("/documents/ask", {
-                    method: "POST",
-                    body: formData
-                });
-
-                const data = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(data.detail || "Question answering failed.");
-                }
-
-                questionStatus.textContent = "Answer generated successfully.";
-
-                const answerHeading = document.createElement("h3");
-                answerHeading.textContent = "Answer";
-
-                const answerText = document.createElement("p");
-                answerText.textContent = data.answer;
-
-                const confidenceText = document.createElement("p");
-                const confidencePercent = Number(data.confidence) * 100;
-                confidenceText.textContent =
-                    `Model confidence: ${confidencePercent.toFixed(1)}%`;
-
-                answerResult.append(
-                    answerHeading,
-                    answerText,
-                    confidenceText
-                );
-
-                if (data.source_passage) {
-                    const sourceHeading = document.createElement("h4");
-                    sourceHeading.textContent = "Supporting passage";
-
-                    const sourceText = document.createElement("p");
-                    sourceText.textContent = data.source_passage;
-
-                    answerResult.append(sourceHeading, sourceText);
-                }
-            } catch (error) {
-                questionStatus.textContent = `Error: ${error.message}`;
-            } finally {
-                questionButton.disabled = false;
-            }
-        });
 
         savedQuestionForm.addEventListener("submit", async(event) => {
             event.preventDefault();
@@ -382,6 +356,8 @@
                 );
 
                 const data = await response.json();
+                console.log("Saved-document QA status:", response.status);
+                console.log("Saved-document QA response:", data);
 
                 if (!response.ok) {
                     throw new Error(data.detail || "Question answering failed.");
@@ -412,6 +388,7 @@
                     savedAnswerResult.append(sourceHeading, source);
                 }
             } catch (error) {
+                console.error("Saved-document QA failed:", error);
                 savedQuestionStatus.textContent = `Error: ${error.message}`;
             } finally {
                 savedQuestionButton.disabled = false;

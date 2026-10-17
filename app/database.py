@@ -1,6 +1,8 @@
 
 import sqlite3
 from pathlib import Path
+from contextlib import contextmanager
+from collections.abc import Iterator
 
 # Store the database in the main project folder.
 DB_PATH = Path(__file__).resolve().parent.parent / "documents.db"
@@ -13,10 +15,23 @@ def get_connection():
     return connection
 
 
+@contextmanager
+def connection_scope() -> Iterator[sqlite3.Connection]:
+    """Manage a SQLite connection, transaction, and cleanup."""
+    connection = get_connection()
+
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
+
+
+
 
 def init_db():
     """Create the documents table and apply simple schema upgrades."""
-    with get_connection() as connection:
+    with connection_scope() as connection:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS documents (
@@ -57,7 +72,7 @@ def save_document(
     extracted_text: str,
 ) -> int:
     """Save document metadata, summary, and extracted text."""
-    with get_connection() as connection:
+    with connection_scope() as connection:
         cursor = connection.execute(
             """
             INSERT INTO documents
@@ -85,7 +100,7 @@ def save_document(
 
 def list_documents() -> list[dict]:
     """Return all saved document records, newest first."""
-    with get_connection() as connection:
+    with connection_scope() as connection:
         rows = connection.execute(
             """
             SELECT id, filename, file_type, page_count,
@@ -100,7 +115,7 @@ def list_documents() -> list[dict]:
 
 def get_document(document_id: int) -> dict | None:
     """Return one document record, or None if it does not exist."""
-    with get_connection() as connection:
+    with connection_scope() as connection:
         row = connection.execute(
             """
             SELECT id, filename, file_type, page_count,
@@ -115,7 +130,7 @@ def get_document(document_id: int) -> dict | None:
 
 def get_document_text(document_id: int) -> dict | None:
     """Retrieve the stored text and metadata for one document."""
-    with get_connection() as connection:
+    with connection_scope() as connection:
         row = connection.execute(
             """
             SELECT id, filename, file_type, word_count, extracted_text
@@ -127,5 +142,17 @@ def get_document_text(document_id: int) -> dict | None:
 
         return dict(row) if row is not None else None
 
+
+def delete_document(document_id: int) -> bool:
+    """Delete a saved document and report whether it existed."""
+    with connection_scope() as connection:
+        cursor = connection.execute(
+            "DELETE FROM documents WHERE id = ?",
+            (document_id,),
+        )
+
+        return cursor.rowcount > 0
+
+
 # Ensure the table exists when this module is imported.
-init_db()
+#init_db() removed by step 18B
