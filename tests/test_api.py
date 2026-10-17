@@ -248,3 +248,136 @@ def test_ask_saved_document_without_text(monkeypatch):
     )
 
     assert response.status_code == 409
+
+
+
+def test_ask_saved_document_rejects_negative_id():
+    response = client.post(
+        "/documents/-1/ask",
+        json={"question": "What is the conclusion?"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Document ID must be a positive integer."
+    )
+
+
+def test_ask_saved_document_rejects_whitespace_question():
+    response = client.post(
+        "/documents/1/ask",
+        json={"question": "   "},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Question cannot be empty."
+    )
+
+
+def test_ask_saved_document_handles_model_failure(monkeypatch):
+    # Use the existing application module.
+    from app import main
+
+    # Replace the summarizer so the test does not load BART.
+    def fake_summarize_text(text, max_sentences=3):
+        return "This is a test summary."
+
+    monkeypatch.setattr(
+        main,
+        "summarize_text",
+        fake_summarize_text,
+    )
+
+    # Upload a document through the API.
+    upload_response = client.post(
+        "/documents/summarize",
+        files={
+            "file": (
+                "test.txt",
+                b"The company increased its revenue in 2025.",
+                "text/plain",
+            )
+        },
+    )
+
+    assert upload_response.status_code == 200
+
+    document_id = upload_response.json()["document_id"]
+
+    # Simulate an unexpected question-answering failure.
+    def failing_answer_question(document_text, question):
+        raise RuntimeError("Simulated model failure")
+
+    monkeypatch.setattr(
+        main,
+        "answer_question",
+        failing_answer_question,
+    )
+
+    # Ask a question about the saved document.
+    response = client.post(
+        f"/documents/{document_id}/ask",
+        json={"question": "What happened to revenue?"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Question answering is temporarily unavailable. "
+        "Please try again later."
+    )
+
+    # Verify internal exception details are not exposed.
+    assert "Simulated model failure" not in response.text
+
+def test_delete_saved_document(monkeypatch):
+    # Avoid loading the summarization model.
+    monkeypatch.setattr(
+        main,
+        "summarize_text",
+        lambda text, max_sentences=3: "A test summary.",
+    )
+
+    # Create a document through the upload API.
+    upload_response = client.post(
+        "/documents/summarize",
+        files={
+            "file": (
+                "delete_test.txt",
+                b"The test document contains enough text for testing deletion.",
+                "text/plain",
+            )
+        },
+    )
+
+    assert upload_response.status_code == 200
+    document_id = upload_response.json()["document_id"]
+
+    # Delete the newly created document.
+    response = client.delete(f"/documents/{document_id}")
+
+    assert response.status_code == 200
+    assert response.json()["document_id"] == document_id
+    assert response.json()["message"] == (
+        "Document deleted successfully."
+    )
+
+    # Verify the deleted document cannot be retrieved.
+    get_response = client.get(f"/documents/{document_id}")
+    assert get_response.status_code == 404
+
+
+def test_delete_nonexistent_document():
+    response = client.delete("/documents/999999")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Document not found."
+
+
+def test_delete_document_rejects_zero_id():
+    response = client.delete("/documents/0")
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "Document ID must be a positive integer."
+    )
