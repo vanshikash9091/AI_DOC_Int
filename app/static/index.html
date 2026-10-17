@@ -1,6 +1,6 @@
-
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -15,7 +15,7 @@
             background: #f4f6f9;
             color: #202938;
         }
-
+        
         .card {
             background: white;
             padding: 24px;
@@ -23,7 +23,7 @@
             border-radius: 12px;
             box-shadow: 0 3px 12px #0000000d;
         }
-
+        
         button {
             padding: 10px 16px;
             margin-top: 12px;
@@ -33,27 +33,27 @@
             color: white;
             cursor: pointer;
         }
-
+        
         button:disabled {
             opacity: 0.6;
             cursor: wait;
         }
-
+        
         input {
             display: block;
             margin-top: 12px;
         }
-
+        
         .status {
             white-space: pre-wrap;
             overflow-wrap: anywhere;
         }
-
+        
         .document {
             padding: 12px 0;
             border-bottom: 1px solid #e5e7eb;
         }
-
+        
         .muted {
             color: #5b6472;
         }
@@ -69,13 +69,7 @@
 
         <form id="uploadForm">
             <label for="file">Choose a TXT or PDF file</label>
-            <input
-                id="file"
-                name="file"
-                type="file"
-                accept=".txt,.pdf"
-                required
-            >
+            <input id="file" name="file" type="file" accept=".txt,.pdf" required>
             <button id="uploadButton" type="submit">
                 Upload and summarize
             </button>
@@ -93,41 +87,31 @@
         <div id="documentList"></div>
     </section>
 
+
     <section class="card">
-        <h2>Ask a question about a document</h2>
+        <h2>Ask a question about a saved document</h2>
         <p class="muted">
-            Upload a TXT or PDF file and ask a question about its contents.
+            Select a previously saved document and ask a question without uploading it again.
         </p>
 
-        <form id="questionForm">
-            <label for="questionFile">Choose a document</label>
-            <input
-                id="questionFile"
-                name="file"
-                type="file"
-                accept=".txt,.pdf"
-                required
-            >
+        <form id="savedQuestionForm">
+            <label for="savedDocumentId">Saved document</label>
+            <select id="savedDocumentId" required>
+                <option value="">Loading saved documents...</option>
+            </select>
 
-            <label for="question">Your question</label>
-            <textarea
-                id="question"
-                name="question"
-                rows="3"
-                placeholder="Example: What are the main conclusions?"
-                required
-                minlength="3"
-                maxlength="1000"
-            ></textarea>
+            <label for="savedQuestion">Your question</label>
+            <textarea id="savedQuestion" rows="3" placeholder="Example: What are the main conclusions?" minlength="3" maxlength="1000" required></textarea>
 
-            <button id="questionButton" type="submit">
-                Ask question
+            <button id="savedQuestionButton" type="submit">
+                Ask about saved document
             </button>
         </form>
 
-        <p id="questionStatus" class="status" role="status"></p>
-        <div id="answerResult"></div>
+        <p id="savedQuestionStatus" class="status" role="status"></p>
+        <div id="savedAnswerResult"></div>
     </section>
+
 
 
     <script>
@@ -137,16 +121,22 @@
         const statusBox = document.getElementById("status");
         const summaryResult = document.getElementById("summaryResult");
         const documentList = document.getElementById("documentList");
-        const refreshButton = document.getElementById("refreshButton");        
+        const refreshButton = document.getElementById("refreshButton");
         const questionForm = document.getElementById("questionForm");
         const questionFile = document.getElementById("questionFile");
         const questionInput = document.getElementById("question");
         const questionButton = document.getElementById("questionButton");
         const questionStatus = document.getElementById("questionStatus");
         const answerResult = document.getElementById("answerResult");
+        const savedQuestionForm = document.getElementById("savedQuestionForm");
+        const savedDocumentId = document.getElementById("savedDocumentId");
+        const savedQuestion = document.getElementById("savedQuestion");
+        const savedQuestionButton = document.getElementById("savedQuestionButton");
+        const savedQuestionStatus = document.getElementById("savedQuestionStatus");
+        const savedAnswerResult = document.getElementById("savedAnswerResult");
 
 
-        uploadForm.addEventListener("submit", async (event) => {
+        uploadForm.addEventListener("submit", async(event) => {
             event.preventDefault();
 
             const file = fileInput.files[0];
@@ -192,6 +182,7 @@
                 summaryResult.append(heading, summary, metadata);
 
                 await loadDocuments();
+                await loadSavedDocumentOptions();
             } catch (error) {
                 statusBox.textContent = `Error: ${error.message}`;
             } finally {
@@ -217,38 +208,76 @@
                     return;
                 }
 
-                
-            for (const doc of data.documents) {
-                const item = document.createElement("div");
-                item.className = "document";
 
-                const title = document.createElement("strong");
-                title.textContent = doc.filename;
+                for (const doc of data.documents) {
+                    const item = document.createElement("div");
+                    item.className = "document";
 
-                const details = document.createElement("p");
-                details.className = "muted";
-                details.textContent =
-                    `ID: ${doc.id} | ` +
-                    `${doc.file_type} | ` +
-                    `${doc.word_count} words`;
+                    const title = document.createElement("strong");
+                    title.textContent = doc.filename;
 
-                const summary = document.createElement("p");
-                summary.textContent = doc.summary;
+                    const details = document.createElement("p");
+                    details.className = "muted";
+                    details.textContent =
+                        `ID: ${doc.id} | ` +
+                        `${doc.file_type} | ` +
+                        `${doc.word_count} words`;
 
-                item.append(title, details, summary);
-                documentList.append(item);
-}
+                    const summary = document.createElement("p");
+                    summary.textContent = doc.summary;
+
+                    item.append(title, details, summary);
+                    documentList.append(item);
+                }
 
             } catch (error) {
                 documentList.textContent = `Error: ${error.message}`;
             }
         }
 
-        refreshButton.addEventListener("click", loadDocuments);
+        refreshButton.addEventListener("click", async() => {
+            await loadDocuments();
+            await loadSavedDocumentOptions();
+        });
 
         loadDocuments();
-        
-        questionForm.addEventListener("submit", async (event) => {
+        loadSavedDocumentOptions();
+
+
+        async function loadSavedDocumentOptions() {
+            savedDocumentId.replaceChildren();
+
+            const placeholder = document.createElement("option");
+            placeholder.value = "";
+            placeholder.textContent = "Select a saved document";
+            savedDocumentId.append(placeholder);
+
+            try {
+                const response = await fetch("/documents");
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || "Could not load saved documents.");
+                }
+
+                for (const doc of data.documents) {
+                    const option = document.createElement("option");
+                    option.value = String(doc.id);
+                    option.textContent = `${doc.filename} (ID: ${doc.id})`;
+                    savedDocumentId.append(option);
+                }
+
+                if (data.documents.length === 0) {
+                    placeholder.textContent = "No saved documents yet";
+                }
+            } catch (error) {
+                placeholder.textContent = "Could not load saved documents";
+                savedQuestionStatus.textContent = `Error: ${error.message}`;
+            }
+        }
+
+
+        questionForm.addEventListener("submit", async(event) => {
             event.preventDefault();
 
             const file = questionFile.files[0];
@@ -319,6 +348,76 @@
             }
         });
 
+        savedQuestionForm.addEventListener("submit", async(event) => {
+            event.preventDefault();
+
+            const id = savedDocumentId.value;
+            const question = savedQuestion.value.trim();
+
+            if (!id) {
+                savedQuestionStatus.textContent = "Please select a document.";
+                return;
+            }
+
+            if (!question) {
+                savedQuestionStatus.textContent = "Please enter a question.";
+                return;
+            }
+
+            savedQuestionButton.disabled = true;
+            savedQuestionStatus.textContent = "Searching the saved document...";
+            savedAnswerResult.replaceChildren();
+
+            try {
+                const response = await fetch(
+                    `/documents/${encodeURIComponent(id)}/ask`, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify({
+                            question
+                        })
+                    }
+                );
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || "Question answering failed.");
+                }
+
+                savedQuestionStatus.textContent =
+                    `Answer generated for ${data.filename}.`;
+
+                const heading = document.createElement("h3");
+                heading.textContent = "Answer";
+
+                const answer = document.createElement("p");
+                answer.textContent = data.answer;
+
+                const confidence = document.createElement("p");
+                confidence.textContent =
+                    `Model confidence: ${(Number(data.confidence) * 100).toFixed(1)}%`;
+
+                savedAnswerResult.append(heading, answer, confidence);
+
+                if (data.source_passage) {
+                    const sourceHeading = document.createElement("h4");
+                    sourceHeading.textContent = "Supporting passage";
+
+                    const source = document.createElement("p");
+                    source.textContent = data.source_passage;
+
+                    savedAnswerResult.append(sourceHeading, source);
+                }
+            } catch (error) {
+                savedQuestionStatus.textContent = `Error: ${error.message}`;
+            } finally {
+                savedQuestionButton.disabled = false;
+            }
+        });
     </script>
 </body>
+
 </html>
