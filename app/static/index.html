@@ -1,0 +1,324 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Document Intelligence</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 850px;
+            margin: 40px auto;
+            padding: 0 20px;
+            background: #f4f6f9;
+            color: #202938;
+        }
+
+        .card {
+            background: white;
+            padding: 24px;
+            margin: 20px 0;
+            border-radius: 12px;
+            box-shadow: 0 3px 12px #0000000d;
+        }
+
+        button {
+            padding: 10px 16px;
+            margin-top: 12px;
+            border: none;
+            border-radius: 6px;
+            background: #2457d6;
+            color: white;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: wait;
+        }
+
+        input {
+            display: block;
+            margin-top: 12px;
+        }
+
+        .status {
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        .document {
+            padding: 12px 0;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .muted {
+            color: #5b6472;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>AI Document Intelligence</h1>
+    <p class="muted">Upload a TXT or PDF document and generate an AI summary.</p>
+
+    <section class="card">
+        <h2>Summarize a document</h2>
+
+        <form id="uploadForm">
+            <label for="file">Choose a TXT or PDF file</label>
+            <input
+                id="file"
+                name="file"
+                type="file"
+                accept=".txt,.pdf"
+                required
+            >
+            <button id="uploadButton" type="submit">
+                Upload and summarize
+            </button>
+        </form>
+
+        <p id="status" class="status" role="status"></p>
+        <div id="summaryResult"></div>
+    </section>
+
+    <section class="card">
+        <h2>Saved documents</h2>
+        <button id="refreshButton" type="button">
+            Refresh document list
+        </button>
+        <div id="documentList"></div>
+    </section>
+
+    <section class="card">
+        <h2>Ask a question about a document</h2>
+        <p class="muted">
+            Upload a TXT or PDF file and ask a question about its contents.
+        </p>
+
+        <form id="questionForm">
+            <label for="questionFile">Choose a document</label>
+            <input
+                id="questionFile"
+                name="file"
+                type="file"
+                accept=".txt,.pdf"
+                required
+            >
+
+            <label for="question">Your question</label>
+            <textarea
+                id="question"
+                name="question"
+                rows="3"
+                placeholder="Example: What are the main conclusions?"
+                required
+                minlength="3"
+                maxlength="1000"
+            ></textarea>
+
+            <button id="questionButton" type="submit">
+                Ask question
+            </button>
+        </form>
+
+        <p id="questionStatus" class="status" role="status"></p>
+        <div id="answerResult"></div>
+    </section>
+
+
+    <script>
+        const uploadForm = document.getElementById("uploadForm");
+        const fileInput = document.getElementById("file");
+        const uploadButton = document.getElementById("uploadButton");
+        const statusBox = document.getElementById("status");
+        const summaryResult = document.getElementById("summaryResult");
+        const documentList = document.getElementById("documentList");
+        const refreshButton = document.getElementById("refreshButton");        
+        const questionForm = document.getElementById("questionForm");
+        const questionFile = document.getElementById("questionFile");
+        const questionInput = document.getElementById("question");
+        const questionButton = document.getElementById("questionButton");
+        const questionStatus = document.getElementById("questionStatus");
+        const answerResult = document.getElementById("answerResult");
+
+
+        uploadForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+
+            const file = fileInput.files[0];
+
+            if (!file) {
+                statusBox.textContent = "Please choose a file first.";
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append("file", file);
+
+            uploadButton.disabled = true;
+            statusBox.textContent = "Uploading and summarizing...";
+            summaryResult.replaceChildren();
+
+            try {
+                const response = await fetch("/documents/summarize", {
+                    method: "POST",
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || "The request failed.");
+                }
+
+                statusBox.textContent = "Document summarized and saved.";
+
+                const heading = document.createElement("h3");
+                heading.textContent = data.filename;
+
+                const summary = document.createElement("p");
+                summary.textContent = data.summary;
+
+                const metadata = document.createElement("p");
+                metadata.textContent =
+                    `Document ID: ${data.document_id} | ` +
+                    `Words: ${data.word_count} | ` +
+                    `Type: ${data.file_type}`;
+
+                summaryResult.append(heading, summary, metadata);
+
+                await loadDocuments();
+            } catch (error) {
+                statusBox.textContent = `Error: ${error.message}`;
+            } finally {
+                uploadButton.disabled = false;
+            }
+        });
+
+        async function loadDocuments() {
+            documentList.textContent = "Loading documents...";
+
+            try {
+                const response = await fetch("/documents");
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || "Could not load documents.");
+                }
+
+                documentList.replaceChildren();
+
+                if (data.documents.length === 0) {
+                    documentList.textContent = "No saved documents yet.";
+                    return;
+                }
+
+                
+            for (const doc of data.documents) {
+                const item = document.createElement("div");
+                item.className = "document";
+
+                const title = document.createElement("strong");
+                title.textContent = doc.filename;
+
+                const details = document.createElement("p");
+                details.className = "muted";
+                details.textContent =
+                    `ID: ${doc.id} | ` +
+                    `${doc.file_type} | ` +
+                    `${doc.word_count} words`;
+
+                const summary = document.createElement("p");
+                summary.textContent = doc.summary;
+
+                item.append(title, details, summary);
+                documentList.append(item);
+}
+
+            } catch (error) {
+                documentList.textContent = `Error: ${error.message}`;
+            }
+        }
+
+        refreshButton.addEventListener("click", loadDocuments);
+
+        loadDocuments();
+        
+        questionForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+
+            const file = questionFile.files[0];
+            const question = questionInput.value.trim();
+
+            if (!file) {
+                questionStatus.textContent = "Please choose a document.";
+                return;
+            }
+
+            if (!question) {
+                questionStatus.textContent = "Please enter a question.";
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append("file", file);
+            formData.append("question", question);
+
+            questionButton.disabled = true;
+            questionStatus.textContent = "Reading document and finding an answer...";
+            answerResult.replaceChildren();
+
+            try {
+                const response = await fetch("/documents/ask", {
+                    method: "POST",
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || "Question answering failed.");
+                }
+
+                questionStatus.textContent = "Answer generated successfully.";
+
+                const answerHeading = document.createElement("h3");
+                answerHeading.textContent = "Answer";
+
+                const answerText = document.createElement("p");
+                answerText.textContent = data.answer;
+
+                const confidenceText = document.createElement("p");
+                const confidencePercent = Number(data.confidence) * 100;
+                confidenceText.textContent =
+                    `Model confidence: ${confidencePercent.toFixed(1)}%`;
+
+                answerResult.append(
+                    answerHeading,
+                    answerText,
+                    confidenceText
+                );
+
+                if (data.source_passage) {
+                    const sourceHeading = document.createElement("h4");
+                    sourceHeading.textContent = "Supporting passage";
+
+                    const sourceText = document.createElement("p");
+                    sourceText.textContent = data.source_passage;
+
+                    answerResult.append(sourceHeading, sourceText);
+                }
+            } catch (error) {
+                questionStatus.textContent = `Error: ${error.message}`;
+            } finally {
+                questionButton.disabled = false;
+            }
+        });
+
+    </script>
+</body>
+</html>

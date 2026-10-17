@@ -13,8 +13,9 @@ def get_connection():
     return connection
 
 
+
 def init_db():
-    """Create the documents table if it does not exist."""
+    """Create the documents table and apply simple schema upgrades."""
     with get_connection() as connection:
         connection.execute(
             """
@@ -30,6 +31,22 @@ def init_db():
             """
         )
 
+        columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(documents)"
+            ).fetchall()
+        }
+
+        if "extracted_text" not in columns:
+            connection.execute(
+                """
+                ALTER TABLE documents
+                ADD COLUMN extracted_text TEXT NOT NULL DEFAULT ''
+                """
+            )
+
+
 
 def save_document(
     filename: str,
@@ -37,16 +54,31 @@ def save_document(
     page_count: int | None,
     word_count: int,
     summary: str,
+    extracted_text: str,
 ) -> int:
-    """Save a document record and return its database ID."""
+    """Save document metadata, summary, and extracted text."""
     with get_connection() as connection:
         cursor = connection.execute(
             """
             INSERT INTO documents
-                (filename, file_type, page_count, word_count, summary)
-            VALUES (?, ?, ?, ?, ?)
+                (
+                    filename,
+                    file_type,
+                    page_count,
+                    word_count,
+                    summary,
+                    extracted_text
+                )
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (filename, file_type, page_count, word_count, summary),
+            (
+                filename,
+                file_type,
+                page_count,
+                word_count,
+                summary,
+                extracted_text,
+            ),
         )
         return cursor.lastrowid
 
@@ -81,6 +113,19 @@ def get_document(document_id: int) -> dict | None:
 
         return dict(row) if row is not None else None
 
+def get_document_text(document_id: int) -> dict | None:
+    """Retrieve the stored text and metadata for one document."""
+    with get_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT id, filename, file_type, word_count, extracted_text
+            FROM documents
+            WHERE id = ?
+            """,
+            (document_id,),
+        ).fetchone()
+
+        return dict(row) if row is not None else None
 
 # Ensure the table exists when this module is imported.
 init_db()

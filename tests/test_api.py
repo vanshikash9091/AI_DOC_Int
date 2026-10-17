@@ -182,3 +182,69 @@ def test_missing_document_returns_404():
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Document not found."
+
+
+def test_ask_saved_document(monkeypatch):
+    def fake_summarize_text(text, max_sentences=3):
+        return "A stored document summary."
+
+    def fake_answer_question(document_text, question):
+        assert "FastAPI builds APIs" in document_text
+        assert question == "What does FastAPI build?"
+
+        return {
+            "answer": "APIs",
+            "confidence": 0.95,
+            "source_passage": "FastAPI builds APIs.",
+        }
+
+    monkeypatch.setattr(main, "summarize_text", fake_summarize_text)
+    monkeypatch.setattr(main, "answer_question", fake_answer_question)
+
+    content = b"FastAPI builds APIs and supports document processing."
+
+    create_response = client.post(
+        "/documents/summarize",
+        files={"file": ("qa_saved.txt", content, "text/plain")},
+    )
+
+    assert create_response.status_code == 200
+    document_id = create_response.json()["document_id"]
+
+    response = client.post(
+        f"/documents/{document_id}/ask",
+        json={"question": "What does FastAPI build?"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "APIs"
+    assert response.json()["document_id"] == document_id
+
+
+def test_ask_saved_document_not_found():
+    response = client.post(
+        "/documents/999999/ask",
+        json={"question": "What does this document say?"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_ask_saved_document_without_text(monkeypatch):
+    from app.database import save_document
+
+    document_id = save_document(
+        filename="old_record.txt",
+        file_type="TXT",
+        page_count=None,
+        word_count=5,
+        summary="An older summary.",
+        extracted_text="",
+    )
+
+    response = client.post(
+        f"/documents/{document_id}/ask",
+        json={"question": "What does this document say?"},
+    )
+
+    assert response.status_code == 409

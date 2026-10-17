@@ -4,6 +4,7 @@ from pathlib import Path
 from app.summarizer import summarize_text
 
 from fastapi import FastAPI, File, HTTPException, UploadFile, Form
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
@@ -13,8 +14,16 @@ from app.document_reader import extract_document_text
 from app.qa_engine import answer_question
 from app.upload_utils import read_limited_file
 
-from app.database import save_document, list_documents, get_document
+from app.database import save_document, list_documents, get_document, get_document_text
 
+from app.schemas import (
+    DocumentListResponse,
+    DocumentRecord,
+    DocumentSummaryResponse,
+    ErrorResponse,
+    DocumentQuestionRequest,
+    DocumentQuestionResponse,
+)
 app = FastAPI(
     title="AI Document Intelligence API",
     description="An API for document analysis and AI-powered assistance.",
@@ -26,6 +35,10 @@ class SummarizeRequest(BaseModel):
     text: str = Field(min_length=20, max_length=10000)
     max_sentences: int = Field(default=3, ge=1, le=10)
 
+@app.get("/ui", include_in_schema=False)
+def home_page():
+    html_path = Path(__file__).parent / "static" / "index.html"
+    return FileResponse(html_path)
 
 @app.get("/")
 def home():
@@ -141,7 +154,10 @@ async def upload_document(file: UploadFile = File(...)):
         "first_chunk_preview": chunks[0][:500] if chunks else ""
     }
 
-@app.post("/documents/summarize")
+@app.post(
+    "/documents/summarize",
+    response_model=DocumentSummaryResponse,
+)
 async def summarize_uploaded_document(
     file: UploadFile = File(...)
 ):
@@ -175,6 +191,7 @@ async def summarize_uploaded_document(
     page_count=document["page_count"],
     word_count=len(cleaned_text.split()),
     summary=summary,
+    extracted_text=cleaned_text,
     )
 
     return {
@@ -226,7 +243,10 @@ async def ask_document_question(
         "confidence": result["confidence"],
         "source_passage": result["source_passage"]
     }
-@app.get("/documents")
+@app.get(
+    "/documents",
+    response_model=DocumentListResponse,
+)
 def get_documents():
     documents = list_documents()
 
@@ -235,7 +255,11 @@ def get_documents():
         "documents": documents,
     }
 
-@app.get("/documents/{document_id}")
+@app.get(
+    "/documents/{document_id}",
+    response_model=DocumentRecord,
+    responses={404: {"model": ErrorResponse}},
+)
 def get_document_by_id(document_id: int):
     document = get_document(document_id)
 
@@ -246,4 +270,46 @@ def get_document_by_id(document_id: int):
         )
 
     return document
-    
+
+
+@app.post(
+    "/documents/{document_id}/ask",
+    response_model=DocumentQuestionResponse,
+)
+def ask_saved_document(
+    document_id: int,
+    request: DocumentQuestionRequest,
+):
+    document = get_document_text(document_id)
+
+    if document is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found.",
+        )
+
+    extracted_text = document["extracted_text"]
+
+    if not extracted_text.strip():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This document has no stored text. "
+                "Upload it again to enable saved-document questions."
+            ),
+        )
+
+    result = answer_question(
+        document_text=extracted_text,
+        question=request.question,
+    )
+
+    return {
+        "document_id": document["id"],
+        "filename": document["filename"],
+        "question": request.question,
+        "answer": result["answer"],
+        "confidence": result["confidence"],
+        "source_passage": result["source_passage"],
+    }
+
